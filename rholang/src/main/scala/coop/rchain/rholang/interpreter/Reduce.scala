@@ -631,6 +631,14 @@ object Reduce {
             result <- (v1.exprInstance, v2.exprInstance) match {
                        case (GString(lhs), GString(rhs)) =>
                          Applicative[M].pure[Expr](GString(lhs + rhs))
+                       case (EListBody(lhs), EListBody(rhs)) =>
+                         Applicative[M].pure[Expr](
+                           EList(
+                             lhs.ps ++ rhs.ps,
+                             lhs.locallyFree union rhs.locallyFree,
+                             lhs.connectiveUsed || rhs.connectiveUsed
+                           )
+                         )
                        case (_: GString, other) =>
                          s.raiseError(
                            ReduceError(
@@ -959,6 +967,8 @@ object Reduce {
             baseExpr.exprInstance match {
               case GString(string) =>
                 Applicative[M].pure[Expr](GInt(string.length))
+              case EListBody(EList(ps, _, _, _)) =>
+                Applicative[M].pure[Expr](GInt(ps.length))
               case other =>
                 s.raiseError(
                   ReduceError(
@@ -981,6 +991,15 @@ object Reduce {
             baseExpr.exprInstance match {
               case GString(string) =>
                 Applicative[M].pure[Par](GString(string.slice(from, until)))
+              case EListBody(EList(ps, locallyFree, connectiveUsed, remainder)) =>
+                Applicative[M].pure[Par](
+                  EList(
+                    ps.slice(from, until),
+                    locallyFree,
+                    connectiveUsed,
+                    remainder
+                  )
+                )
               case other =>
                 s.raiseError(
                   ReduceError(
