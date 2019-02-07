@@ -3,14 +3,15 @@ package coop.rchain.blockstorage
 import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.BlockDagRepresentation.Validator
 import coop.rchain.blockstorage.BlockStore.BlockHash
+import coop.rchain.blockstorage.StorageError.StorageErr
 import coop.rchain.casper.protocol.BlockMessage
 
 trait BlockDagStorage[F[_]] {
   def getRepresentation: F[BlockDagRepresentation[F]]
   def insert(block: BlockMessage): F[BlockDagRepresentation[F]]
-  def checkpoint(): F[Unit]
-  def clear(): F[Unit]
-  def close(): F[Unit]
+  def checkpoint(): F[StorageErr[Unit]]
+  def clear(): F[StorageErr[Unit]]
+  def close(): F[StorageErr[Unit]]
 }
 
 object BlockDagStorage {
