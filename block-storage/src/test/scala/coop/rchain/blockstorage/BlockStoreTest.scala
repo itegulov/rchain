@@ -11,7 +11,7 @@ import coop.rchain.casper.protocol._
 import coop.rchain.rspace.Context
 import coop.rchain.shared.PathOps._
 import coop.rchain.models.blockImplicits.{blockBatchesGen, blockElementGen, blockElementsGen}
-import cats.effect.Sync
+import cats.effect.{Resource, Sync}
 import cats.effect.concurrent.Ref
 import coop.rchain.blockstorage.InMemBlockStore.emptyMapRef
 import coop.rchain.metrics.Metrics
@@ -135,28 +135,28 @@ class FileLMDBIndexBlockStoreTest extends BlockStoreTest {
   private[this] val mapSize: Long    = 100L * 1024L * 1024L * 4096L
 
   override def withStore[R](f: BlockStore[Task] => Task[R]): R = {
-    val dbDir                           = mkTmpDir()
-    implicit val metrics: Metrics[Task] = new MetricsNOP[Task]()
-    implicit val log: Log[Task]         = new Log.NOPLog[Task]()
-    val env                             = Context.env(dbDir, mapSize)
-    val test = for {
-      store  <- FileLMDBIndexBlockStore.create[Task](env, dbDir).map(_.right.get)
-      _      <- store.find(_ => true).map(map => assert(map.isEmpty))
-      result <- f(store)
-    } yield result
+    val dbDir = mkTmpDir()
+    val test =
+      createBlockStore(dbDir) { store =>
+        for {
+          _      <- store.find(_ => true).map(map => assert(map.isEmpty))
+          result <- f(store)
+        } yield result
+      }
     try {
       test.unsafeRunSync
     } finally {
-      env.close()
       dbDir.recursivelyDelete()
     }
   }
 
-  private def createBlockStore(blockStoreDataDir: Path): Task[BlockStore[Task]] = {
+  private def createBlockStore[R](
+      blockStoreDataDir: Path
+  )(f: BlockStore[Task] => Task[R]): Task[R] = {
     implicit val metrics = new MetricsNOP[Task]()
     implicit val log     = new Log.NOPLog[Task]()
-    val env              = Context.env(blockStoreDataDir, 100L * 1024L * 1024L * 4096L)
-    FileLMDBIndexBlockStore.create[Task](env, blockStoreDataDir).map(_.right.get)
+    val env              = Context.env(blockStoreDataDir, mapSize)
+    FileLMDBIndexBlockStore.createUnsafe[Task](env, blockStoreDataDir).use(f)
   }
 
   def withStoreLocation[R](f: Path => Task[R]): R = {
@@ -178,16 +178,18 @@ class FileLMDBIndexBlockStoreTest extends BlockStoreTest {
     forAll(blockElementsGen, minSize(0), sizeRange(10)) { blockStoreElements =>
       withStoreLocation { blockStoreDataDir =>
         for {
-          firstStore  <- createBlockStore(blockStoreDataDir)
-          _           <- blockStoreElements.traverse_[Task, Unit](firstStore.put)
-          _           <- firstStore.close()
-          secondStore <- createBlockStore(blockStoreDataDir)
-          _ <- blockStoreElements.traverse[Task, Assertion] { block =>
-                secondStore.get(block.blockHash).map(_ shouldBe Some(block))
+          _ <- createBlockStore(blockStoreDataDir) { store =>
+                blockStoreElements.traverse_[Task, Unit](store.put)
               }
-          result <- secondStore.find(_ => true).map(_.size shouldEqual blockStoreElements.size)
-          _      <- secondStore.close()
-        } yield result
+          _ <- createBlockStore(blockStoreDataDir) { store =>
+                for {
+                  _ <- blockStoreElements.traverse[Task, Assertion] { block =>
+                        store.get(block.blockHash).map(_ shouldBe Some(block))
+                      }
+                  _ <- store.find(_ => true).map(_.size shouldEqual blockStoreElements.size)
+                } yield ()
+              }
+        } yield ()
       }
     }
   }
@@ -200,13 +202,15 @@ class FileLMDBIndexBlockStoreTest extends BlockStoreTest {
           List(Signature(ByteString.EMPTY, "", ByteString.EMPTY))
         )
       for {
-        firstStore          <- createBlockStore(blockStoreDataDir)
-        _                   <- firstStore.putApprovedBlock(approvedBlock)
-        _                   <- firstStore.close()
-        secondStore         <- createBlockStore(blockStoreDataDir)
-        storedApprovedBlock <- secondStore.getApprovedBlock
-        _                   = storedApprovedBlock shouldBe Some(approvedBlock)
-        _                   <- secondStore.close()
+        _ <- createBlockStore(blockStoreDataDir) { store =>
+              store.putApprovedBlock(approvedBlock)
+            }
+        _ <- createBlockStore(blockStoreDataDir) { store =>
+              for {
+                storedApprovedBlock <- store.getApprovedBlock
+                _                   = storedApprovedBlock shouldBe Some(approvedBlock)
+              } yield ()
+            }
       } yield ()
     }
   }
@@ -216,22 +220,26 @@ class FileLMDBIndexBlockStoreTest extends BlockStoreTest {
       withStoreLocation { blockStoreDataDir =>
         val (firstHalf, secondHalf) = blockStoreElements.splitAt(blockStoreElements.size / 2)
         for {
-          firstStore <- createBlockStore(blockStoreDataDir)
-          _          <- firstHalf.traverse_[Task, Unit](firstStore.put)
-          _          <- firstStore.checkpoint()
-          _          <- secondHalf.traverse_[Task, Unit](firstStore.put)
-          _ <- blockStoreElements.traverse[Task, Assertion] { block =>
-                firstStore.get(block.blockHash).map(_ shouldBe Some(block))
+          _ <- createBlockStore(blockStoreDataDir) { store =>
+                for {
+                  _ <- firstHalf.traverse_[Task, Unit](store.put)
+                  _ <- store.checkpoint()
+                  _ <- secondHalf.traverse_[Task, Unit](store.put)
+                  _ <- blockStoreElements.traverse[Task, Assertion] { block =>
+                        store.get(block.blockHash).map(_ shouldBe Some(block))
+                      }
+                  _ <- store.find(_ => true).map(_.size shouldEqual blockStoreElements.size)
+                } yield ()
               }
-          _           <- firstStore.find(_ => true).map(_.size shouldEqual blockStoreElements.size)
-          _           <- firstStore.close()
-          secondStore <- createBlockStore(blockStoreDataDir)
-          _ <- blockStoreElements.traverse[Task, Assertion] { block =>
-                secondStore.get(block.blockHash).map(_ shouldBe Some(block))
+          _ <- createBlockStore(blockStoreDataDir) { store =>
+                for {
+                  _ <- blockStoreElements.traverse[Task, Assertion] { block =>
+                        store.get(block.blockHash).map(_ shouldBe Some(block))
+                      }
+                  _ <- store.find(_ => true).map(_.size shouldEqual blockStoreElements.size)
+                } yield ()
               }
-          result <- secondStore.find(_ => true).map(_.size shouldEqual blockStoreElements.size)
-          _      <- secondStore.close()
-        } yield result
+        } yield ()
       }
     }
   }
@@ -241,24 +249,28 @@ class FileLMDBIndexBlockStoreTest extends BlockStoreTest {
       withStoreLocation { blockStoreDataDir =>
         val blocks = blockStoreBatches.flatten
         for {
-          firstStore <- createBlockStore(blockStoreDataDir)
-          _ <- blockStoreBatches.traverse_[Task, Unit](
-                blockStoreElements =>
-                  blockStoreElements
-                    .traverse_[Task, Unit](firstStore.put) *> firstStore.checkpoint()
-              )
-          _ <- blocks.traverse[Task, Assertion] { block =>
-                firstStore.get(block.blockHash).map(_ shouldBe Some(block))
+          _ <- createBlockStore(blockStoreDataDir) { store =>
+                for {
+                  _ <- blockStoreBatches.traverse_[Task, Unit](
+                        blockStoreElements =>
+                          blockStoreElements
+                            .traverse_[Task, Unit](store.put) *> store.checkpoint()
+                      )
+                  _ <- blocks.traverse[Task, Assertion] { block =>
+                        store.get(block.blockHash).map(_ shouldBe Some(block))
+                      }
+                  _ <- store.find(_ => true).map(_.size shouldEqual blocks.size)
+                } yield ()
               }
-          _           <- firstStore.find(_ => true).map(_.size shouldEqual blocks.size)
-          _           <- firstStore.close()
-          secondStore <- createBlockStore(blockStoreDataDir)
-          _ <- blocks.traverse[Task, Assertion] { block =>
-                secondStore.get(block.blockHash).map(_ shouldBe Some(block))
+          _ <- createBlockStore(blockStoreDataDir) { store =>
+                for {
+                  _ <- blocks.traverse[Task, Assertion] { block =>
+                        store.get(block.blockHash).map(_ shouldBe Some(block))
+                      }
+                  _ <- store.find(_ => true).map(_.size shouldEqual blocks.size)
+                } yield ()
               }
-          result <- secondStore.find(_ => true).map(_.size shouldEqual blocks.size)
-          _      <- secondStore.close()
-        } yield result
+        } yield ()
       }
     }
   }

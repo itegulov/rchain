@@ -4,7 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.file._
 
 import cats.Monad
-import cats.effect.{Concurrent, Sync}
+import cats.effect.{Concurrent, Resource, Sync}
 import cats.implicits._
 import cats.effect.concurrent.Semaphore
 import cats.mtl.MonadState
@@ -273,11 +273,22 @@ object FileLMDBIndexBlockStore {
           .asLeft[List[Checkpoint]]
       }
     } yield result
+  
+  def createUnsafe[F[_]: Concurrent: Sync: Log](
+    env: Env[ByteBuffer],
+    blockStoreDataDir: Path
+  ): Resource[F, BlockStore[F]] =
+    Resource.suspend(
+      create(
+        env,
+        blockStoreDataDir
+      ).map(_.right.get)
+    )
 
   def create[F[_]: Concurrent: Sync: Log](
       env: Env[ByteBuffer],
       blockStoreDataDir: Path
-  ): F[StorageErr[BlockStore[F]]] =
+  ): F[StorageErr[Resource[F, BlockStore[F]]]] =
     create(
       env,
       blockStoreDataDir.resolve("storage"),
@@ -290,7 +301,7 @@ object FileLMDBIndexBlockStore {
       storagePath: Path,
       approvedBlockPath: Path,
       checkpointsDirPath: Path
-  ): F[StorageErr[BlockStore[F]]] = {
+  ): F[StorageErr[Resource[F, BlockStore[F]]]] = {
     implicit val raiseIOError: RaiseIOError[F] = IOError.raiseIOErrorThroughSync[F]
     for {
       lock <- Semaphore[F](1)
@@ -310,24 +321,28 @@ object FileLMDBIndexBlockStore {
             checkpointsMap,
             currentIndex
           )
-          (new FileLMDBIndexBlockStore[F](
-            lock,
-            index,
-            storagePath,
-            approvedBlockPath,
-            checkpointsDirPath,
-            new AtomicMonadState[F, FileLMDBIndexBlockStoreState[F]](
-              AtomicAny(initialState)
-            )
-          ): BlockStore[F]).asRight[StorageError]
-        case Left(e) => e.asLeft[BlockStore[F]]
+          Resource.make(
+            Sync[F].delay {
+              new FileLMDBIndexBlockStore[F](
+                lock,
+                index,
+                storagePath,
+                approvedBlockPath,
+                checkpointsDirPath,
+                new AtomicMonadState[F, FileLMDBIndexBlockStoreState[F]](
+                  AtomicAny(initialState)
+                )
+              )
+            }
+          )(_.close()).widen[BlockStore[F]].asRight[StorageError]
+        case Left(e) => e.asLeft[Resource[F, BlockStore[F]]]
       }
     } yield result
   }
 
   def create[F[_]: Monad: Concurrent: Sync: Log](
       config: Config
-  ): F[StorageErr[BlockStore[F]]] =
+  ): F[StorageErr[Resource[F, BlockStore[F]]]] =
     for {
       notExists <- Sync[F].delay(Files.notExists(config.indexPath))
       _         <- if (notExists) Sync[F].delay(Files.createDirectories(config.indexPath)) else ().pure[F]

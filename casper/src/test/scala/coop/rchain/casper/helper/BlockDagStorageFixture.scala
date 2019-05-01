@@ -26,25 +26,16 @@ trait BlockDagStorageFixture extends BeforeAndAfter { self: Suite =>
   val scheduler = Scheduler.fixedPool("block-dag-storage-fixture-scheduler", 4)
 
   def withStorage[R](f: BlockStore[Task] => IndexedBlockDagStorage[Task] => Task[R]): R = {
-    val testProgram = Sync[Task].bracket {
-      Sync[Task].delay {
-        (BlockDagStorageTestFixture.blockDagStorageDir, BlockDagStorageTestFixture.blockStorageDir)
-      }
-    } {
-      case (blockDagStorageDir, blockStorageDir) =>
+    val testProgram = BlockDagStorageTestFixture.createDirectories[Task].use {
+      case (blockStorageDir, blockDagStorageDir) =>
         implicit val metrics = new MetricsNOP[Task]()
         implicit val log     = new Log.NOPLog[Task]()
-        for {
-          blockStore             <- BlockDagStorageTestFixture.createBlockStorage[Task](blockStorageDir)
-          blockDagStorage        <- BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir)
-          indexedBlockDagStorage <- IndexedBlockDagStorage.create(blockDagStorage)
-          result                 <- f(blockStore)(indexedBlockDagStorage)
-        } yield result
-    } {
-      case (blockDagStorageDir, blockStorageDir) =>
-        Sync[Task].delay {
-          blockDagStorageDir.recursivelyDelete()
-          blockStorageDir.recursivelyDelete()
+        BlockDagStorageTestFixture.createBlockStorage[Task](blockStorageDir).use { blockStore =>
+          for {
+            blockDagStorage        <- BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir)
+            indexedBlockDagStorage <- IndexedBlockDagStorage.create(blockDagStorage)
+            result                 <- f(blockStore)(indexedBlockDagStorage)
+          } yield result
         }
     }
     testProgram.unsafeRunSync(scheduler)
@@ -93,9 +84,9 @@ object BlockDagStorageTestFixture {
 
   def createBlockStorage[F[_]: Concurrent: Metrics: Sync: Log](
       blockStorageDir: Path
-  ): F[BlockStore[F]] = {
+  ): Resource[F, BlockStore[F]] = {
     val env = Context.env(blockStorageDir, mapSize)
-    FileLMDBIndexBlockStore.create[F](env, blockStorageDir).map(_.right.get)
+    FileLMDBIndexBlockStore.createUnsafe[F](env, blockStorageDir)
   }
 
   def createBlockDagStorage(blockDagStorageDir: Path)(

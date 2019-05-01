@@ -181,9 +181,7 @@ object HashSetCasperTestNode {
     implicit val metricEff          = new Metrics.MetricsNOP[F]
     val env                         = Context.env(blockStoreDir, mapSize)
     for {
-      blockStore <- Resource.make[F, BlockStore[F]](
-                     FileLMDBIndexBlockStore.create[F](env, blockStoreDir).map(_.right.get)
-                   )(_.close())
+      blockStore <- FileLMDBIndexBlockStore.createUnsafe[F](env, blockStoreDir)
       blockDagStorage <- Resource.make[F, BlockDagStorage[F]](
                           BlockDagFileStorage
                             .createEmptyFromGenesis[F](
@@ -295,9 +293,7 @@ object HashSetCasperTestNode {
               storageDirectories           <- BlockDagStorageTestFixture.createDirectories[F]
               (blockStoreDir, blockDagDir) = storageDirectories
               env                          = Context.env(blockStoreDir, mapSize)
-              blockStore <- Resource.make[F, BlockStore[F]](
-                             FileLMDBIndexBlockStore.create[F](env, blockStoreDir).map(_.right.get)
-                           )(_.close())
+              blockStore                   <- FileLMDBIndexBlockStore.createUnsafe[F](env, blockStoreDir)
               blockDagStorage <- Resource.make[F, BlockDagStorage[F]](
                                   BlockDagFileStorage
                                     .createEmptyFromGenesis[F](

@@ -36,48 +36,50 @@ class ManyValidatorsTest
       .map(Bond(_, 10))
     val v1 = bonds(0).validator
 
-    val testProgram = for {
-      blockStore             <- BlockDagStorageTestFixture.createBlockStorage[Task](blockStoreDir)
-      blockDagStorage        <- BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir)
-      indexedBlockDagStorage <- IndexedBlockDagStorage.create(blockDagStorage)
-      genesis <- createGenesis[Task](bonds = bonds)(
-                  Monad[Task],
-                  Time[Task],
-                  blockStore,
-                  indexedBlockDagStorage
+    val testProgram = BlockDagStorageTestFixture.createBlockStorage[Task](blockStoreDir).use {
+      blockStore =>
+        for {
+          blockDagStorage        <- BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir)
+          indexedBlockDagStorage <- IndexedBlockDagStorage.create(blockDagStorage)
+          genesis <- createGenesis[Task](bonds = bonds)(
+                      Monad[Task],
+                      Time[Task],
+                      blockStore,
+                      indexedBlockDagStorage
+                    )
+          b <- createBlock[Task](Seq(genesis.blockHash), genesis, v1, bonds, bonds.map {
+                case Bond(validator, _) => validator -> genesis.blockHash
+              }.toMap)(Monad[Task], Time[Task], blockStore, indexedBlockDagStorage)
+          _                     <- indexedBlockDagStorage.close()
+          initialLatestMessages = bonds.map { case Bond(validator, _) => validator -> b }.toMap
+          _ <- Sync[Task].delay {
+                BlockDagStorageTestFixture.writeInitialLatestMessages(
+                  blockDagStorageDir.resolve("latest-messages-data"),
+                  blockDagStorageDir.resolve("latest-messages-crc"),
+                  initialLatestMessages
                 )
-      b <- createBlock[Task](Seq(genesis.blockHash), genesis, v1, bonds, bonds.map {
-            case Bond(validator, _) => validator -> genesis.blockHash
-          }.toMap)(Monad[Task], Time[Task], blockStore, indexedBlockDagStorage)
-      _                     <- indexedBlockDagStorage.close()
-      initialLatestMessages = bonds.map { case Bond(validator, _) => validator -> b }.toMap
-      _ <- Sync[Task].delay {
-            BlockDagStorageTestFixture.writeInitialLatestMessages(
-              blockDagStorageDir.resolve("latest-messages-data"),
-              blockDagStorageDir.resolve("latest-messages-crc"),
-              initialLatestMessages
-            )
-          }
-      newBlockDagStorage        <- BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir)
-      newIndexedBlockDagStorage <- IndexedBlockDagStorage.create(newBlockDagStorage)
-      dag                       <- newIndexedBlockDagStorage.getRepresentation
-      tips                      <- Estimator.tips[Task](dag, genesis)
-      casperEffect <- NoOpsCasperEffect[Task](
-                       HashMap.empty[BlockHash, BlockMessage],
-                       tips.toIndexedSeq
-                     )(Sync[Task], blockStore, newIndexedBlockDagStorage)
-      logEff             = new LogStub[Task]
-      casperRef          <- MultiParentCasperRef.of[Task]
-      _                  <- casperRef.set(casperEffect)
-      cliqueOracleEffect = SafetyOracle.cliqueOracle[Task]
-      result <- BlockAPI.showBlocks[Task](Some(Int.MaxValue))(
-                 Monad[Task],
-                 casperRef,
-                 logEff,
-                 cliqueOracleEffect,
-                 blockStore
-               )
-    } yield result
+              }
+          newBlockDagStorage        <- BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir)
+          newIndexedBlockDagStorage <- IndexedBlockDagStorage.create(newBlockDagStorage)
+          dag                       <- newIndexedBlockDagStorage.getRepresentation
+          tips                      <- Estimator.tips[Task](dag, genesis)
+          casperEffect <- NoOpsCasperEffect[Task](
+                           HashMap.empty[BlockHash, BlockMessage],
+                           tips.toIndexedSeq
+                         )(Sync[Task], blockStore, newIndexedBlockDagStorage)
+          logEff             = new LogStub[Task]
+          casperRef          <- MultiParentCasperRef.of[Task]
+          _                  <- casperRef.set(casperEffect)
+          cliqueOracleEffect = SafetyOracle.cliqueOracle[Task]
+          result <- BlockAPI.showBlocks[Task](Some(Int.MaxValue))(
+                     Monad[Task],
+                     casperRef,
+                     logEff,
+                     cliqueOracleEffect,
+                     blockStore
+                   )
+        } yield result
+    }
     testProgram.runSyncUnsafe(1.minute)(scheduler, CanBlock.permit)
   }
 }

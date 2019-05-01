@@ -8,7 +8,7 @@ import coop.rchain.blockstorage.BlockStore
 import coop.rchain.casper.MultiParentCasper.ignoreDoppelgangerCheck
 import coop.rchain.casper.genesis.Genesis
 import coop.rchain.casper.genesis.contracts._
-import coop.rchain.casper.helper.HashSetCasperTestNode.Effect
+import coop.rchain.casper.helper.HashSetCasperTestNode._
 import coop.rchain.casper.helper.{BlockDagStorageTestFixture, HashSetCasperTestNode}
 import coop.rchain.casper.protocol._
 import coop.rchain.casper.util.ProtoUtil
@@ -33,11 +33,9 @@ object MultiParentCasperTestUtil {
   def validateBlockStore[R](
       node: HashSetCasperTestNode[Effect]
   )(f: BlockStore[Effect] => Effect[R])(implicit metrics: Metrics[Effect], log: Log[Effect]) =
-    for {
-      bs     <- BlockDagStorageTestFixture.createBlockStorage[Effect](node.blockStoreDir)
-      result <- f(bs)
-      _      <- bs.close()
-    } yield result
+    BlockDagStorageTestFixture.createBlockStorage[Effect](node.blockStoreDir).use { blockStore =>
+      f(blockStore)
+    }
 
   def blockTuplespaceContents(
       block: BlockMessage

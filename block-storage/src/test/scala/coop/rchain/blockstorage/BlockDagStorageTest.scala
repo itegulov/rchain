@@ -5,8 +5,7 @@ import java.nio.file.StandardOpenOption
 import cats.implicits._
 import coop.rchain.shared.PathOps._
 import coop.rchain.catscontrib.TaskContrib.TaskOps
-
-import cats.effect.Sync
+import cats.effect.{Resource, Sync}
 import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.BlockDagRepresentation.Validator
 import coop.rchain.blockstorage.BlockStore.BlockHash
@@ -131,13 +130,6 @@ class BlockDagFileStorageTest extends BlockDagStorageTest {
 
   private def defaultBlockNumberIndex(dagDataDir: Path): Path =
     dagDataDir.resolve("block-number-index")
-
-  private def createBlockStore(blockStoreDataDir: Path): Task[BlockStore[Task]] = {
-    implicit val metrics = new MetricsNOP[Task]()
-    implicit val log     = new Log.NOPLog[Task]()
-    val env              = Context.env(blockStoreDataDir, 100L * 1024L * 1024L * 4096L)
-    FileLMDBIndexBlockStore.create[Task](env, blockStoreDataDir).map(_.right.get)
-  }
 
   private def createAtDefaultLocation(
       dagDataDir: Path,
