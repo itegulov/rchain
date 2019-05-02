@@ -1034,34 +1034,37 @@ object BlockDagFileStorage {
 
   private def loadBlockNumberIndexLmdbDbi[F[_]: Sync: Log: RaiseIOError](
       config: Config
-  ): F[LmdbDbi[F, ByteBuffer]] =
-    for {
-      _ <- notExists[F](config.blockNumberIndexPath).ifM(
-            makeDirectory[F](config.blockNumberIndexPath) >> ().pure[F],
-            ().pure[F]
-          )
-      env <- Sync[F].delay {
-              val flags = if (config.noTls) List(EnvFlags.MDB_NOTLS) else List.empty
-              Env
-                .create()
-                .setMapSize(config.mapSize)
-                .setMaxDbs(config.maxDbs)
-                .setMaxReaders(config.maxReaders)
-                .open(config.blockNumberIndexPath.toFile, flags: _*)
-            }
-      dbi <- Sync[F].delay {
-              env.openDbi(s"block_dag_storage_block_number_index", MDB_CREATE)
-            }
-    } yield LmdbDbi[F, ByteBuffer](env, dbi)
+  ): Resource[F, LmdbDbi[F, ByteBuffer]] =
+    Resource.suspend {
+      for {
+        _ <- notExists[F](config.blockNumberIndexPath).ifM(
+              makeDirectory[F](config.blockNumberIndexPath) >> ().pure[F],
+              ().pure[F]
+            )
+        env <- Sync[F].delay {
+                val flags = if (config.noTls) List(EnvFlags.MDB_NOTLS) else List.empty
+                Env
+                  .create()
+                  .setMapSize(config.mapSize)
+                  .setMaxDbs(config.maxDbs)
+                  .setMaxReaders(config.maxReaders)
+                  .open(config.blockNumberIndexPath.toFile, flags: _*)
+              }
+        dbi <- Sync[F].delay {
+                env.openDbi(s"block_dag_storage_block_number_index", MDB_CREATE)
+              }
+      } yield LmdbDbi.create[F, ByteBuffer](env, dbi)
+    }
 
   def create[F[_]: Concurrent: Sync: Log](
       config: Config
   ): F[BlockDagFileStorage[F]] = {
     implicit val raiseIOError: RaiseIOError[F] = IOError.raiseIOErrorThroughSync[F]
     for {
-      lock                  <- Semaphore[F](1)
-      blockNumberIndex      <- loadBlockNumberIndexLmdbDbi(config)
-      readLatestMessagesCrc <- readCrc[F](config.latestMessagesCrcPath)
+      lock                      <- Semaphore[F](1)
+      blockNumberIndexAllocated <- loadBlockNumberIndexLmdbDbi(config).allocated
+      (blockNumberIndex, _)     = blockNumberIndexAllocated
+      readLatestMessagesCrc     <- readCrc[F](config.latestMessagesCrcPath)
       latestMessagesFileResource = Resource.make(
         RandomAccessIO.open[F](config.latestMessagesLogPath, RandomAccessIO.ReadWrite)
       )(_.close)
@@ -1194,12 +1197,13 @@ object BlockDagFileStorage {
   ): F[BlockDagFileStorage[F]] = {
     implicit val raiseIOError: RaiseIOError[F] = IOError.raiseIOErrorThroughSync[F]
     for {
-      lock                  <- Semaphore[F](1)
-      blockNumberIndex      <- loadBlockNumberIndexLmdbDbi(config)
-      _                     <- createFile[F](config.latestMessagesLogPath)
-      _                     <- createFile[F](config.latestMessagesCrcPath)
-      genesisBonds          = BlockMessageUtil.bonds(genesis)
-      initialLatestMessages = genesisBonds.map(_.validator -> genesis.blockHash).toMap
+      lock                      <- Semaphore[F](1)
+      blockNumberIndexAllocated <- loadBlockNumberIndexLmdbDbi(config).allocated
+      (blockNumberIndex, _)     = blockNumberIndexAllocated
+      _                         <- createFile[F](config.latestMessagesLogPath)
+      _                         <- createFile[F](config.latestMessagesCrcPath)
+      genesisBonds              = BlockMessageUtil.bonds(genesis)
+      initialLatestMessages     = genesisBonds.map(_.validator -> genesis.blockHash).toMap
       latestMessagesData = initialLatestMessages
         .foldLeft(ByteString.EMPTY) {
           case (byteString, (validator, blockHash)) =>

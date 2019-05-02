@@ -212,7 +212,6 @@ class FileLMDBIndexBlockStore[F[_]: Monad: Sync: RaiseIOError: Log] private (
       for {
         blockMessageRandomAccessFile <- getBlockMessageRandomAccessFile
         _                            <- blockMessageRandomAccessFile.close
-        _                            <- index.close
       } yield ()
     )
 }
@@ -273,10 +272,10 @@ object FileLMDBIndexBlockStore {
           .asLeft[List[Checkpoint]]
       }
     } yield result
-  
+
   def createUnsafe[F[_]: Concurrent: Sync: Log](
-    env: Env[ByteBuffer],
-    blockStoreDataDir: Path
+      env: Env[ByteBuffer],
+      blockStoreDataDir: Path
   ): Resource[F, BlockStore[F]] =
     Resource.suspend(
       create(
@@ -308,7 +307,6 @@ object FileLMDBIndexBlockStore {
       dbi <- Sync[F].delay {
               env.openDbi(s"block_store_index", MDB_CREATE)
             }
-      index                        = LmdbDbi[F, ByteBuffer](env, dbi)
       _                            <- createNewFile(approvedBlockPath)
       blockMessageRandomAccessFile <- RandomAccessIO.open(storagePath, RandomAccessIO.ReadWrite)
       sortedCheckpointsEither      <- loadCheckpoints(checkpointsDirPath)
@@ -321,20 +319,25 @@ object FileLMDBIndexBlockStore {
             checkpointsMap,
             currentIndex
           )
-          Resource.make(
-            Sync[F].delay {
-              new FileLMDBIndexBlockStore[F](
-                lock,
-                index,
-                storagePath,
-                approvedBlockPath,
-                checkpointsDirPath,
-                new AtomicMonadState[F, FileLMDBIndexBlockStoreState[F]](
-                  AtomicAny(initialState)
-                )
-              )
-            }
-          )(_.close()).widen[BlockStore[F]].asRight[StorageError]
+          (for {
+            index <- LmdbDbi.create[F, ByteBuffer](env, dbi)
+            result <- Resource
+                       .make(
+                         Sync[F].delay {
+                           new FileLMDBIndexBlockStore[F](
+                             lock,
+                             index,
+                             storagePath,
+                             approvedBlockPath,
+                             checkpointsDirPath,
+                             new AtomicMonadState[F, FileLMDBIndexBlockStoreState[F]](
+                               AtomicAny(initialState)
+                             )
+                           )
+                         }
+                       )(_.close())
+                       .widen[BlockStore[F]]
+          } yield result).asRight[StorageError]
         case Left(e) => e.asLeft[Resource[F, BlockStore[F]]]
       }
     } yield result

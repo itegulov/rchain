@@ -1,9 +1,9 @@
 package coop.rchain.blockstorage.util.io
 
-import java.io.{IOException, PrintWriter, StringWriter}
+import java.io.IOException
 
 import cats.implicits._
-import cats.effect.{ExitCase, Sync}
+import cats.effect.{ExitCase, Resource, Sync}
 import coop.rchain.blockstorage.util.io.IOError.RaiseIOError
 import coop.rchain.shared.Log
 import coop.rchain.shared.Resources.withResource
@@ -12,9 +12,9 @@ import org.lmdbjava._
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-final case class LmdbDbi[F[_]: Sync: Log: RaiseIOError, T](
-    env: Env[T],
-    dbi: Dbi[T]
+final case class LmdbDbi[F[_]: Sync: Log: RaiseIOError, T] private (
+    private val env: Env[T],
+    private val dbi: Dbi[T]
 ) {
   private[this] def withTxn[R](txnThunk: => Txn[T])(f: Txn[T] => R): F[R] =
     Sync[F].bracketCase(Sync[F].delay(txnThunk)) { txn =>
@@ -62,4 +62,12 @@ final case class LmdbDbi[F[_]: Sync: Log: RaiseIOError, T](
           RaiseIOError[F].raise[Unit](UnexpectedIOError(e))
       }
     }
+}
+
+object LmdbDbi {
+  def create[F[_]: Sync: Log: RaiseIOError, T](
+      env: Env[T],
+      dbi: Dbi[T]
+  ): Resource[F, LmdbDbi[F, T]] =
+    Resource.make(Sync[F].delay { new LmdbDbi(env, dbi) })(_.close)
 }
