@@ -85,16 +85,14 @@ class FileLMDBIndexBlockStore[F[_]: Monad: Sync: RaiseIOError: Log] private (
                          checkpoints <- getCheckpoints
                          result <- checkpoints.get(indexEntry.checkpointIndex) match {
                                     case Some(checkpoint) =>
-                                      Sync[F].bracket {
-                                        RandomAccessIO.open[F](
+                                      RandomAccessIO
+                                        .open[F](
                                           checkpoint.storagePath,
                                           RandomAccessIO.Read
                                         )
-                                      } { storageFile =>
-                                        readBlockMessageFromFile(storageFile)
-                                      } { storageFile =>
-                                        storageFile.close
-                                      }
+                                        .use { storageFile =>
+                                          readBlockMessageFromFile(storageFile)
+                                        }
                                     case None =>
                                       RaiseIOError[F].raise[BlockMessage](
                                         UnavailableReferencedCheckpoint(
@@ -186,9 +184,10 @@ class FileLMDBIndexBlockStore[F[_]: Monad: Sync: RaiseIOError: Log] private (
         blockMessageRandomAccessFile <- getBlockMessageRandomAccessFile
         _                            <- blockMessageRandomAccessFile.close
         _                            <- moveFile(storagePath, checkpointPath, StandardCopyOption.ATOMIC_MOVE)
-        newBlockMessageRandomAccessFile <- RandomAccessIO
-                                            .open[F](storagePath, RandomAccessIO.ReadWrite)
-        _ <- setBlockMessageRandomAccessFile(newBlockMessageRandomAccessFile)
+        _ <- RandomAccessIO.open[F](storagePath, RandomAccessIO.ReadWrite).use {
+              newBlockMessageRandomAccessFile =>
+                setBlockMessageRandomAccessFile(newBlockMessageRandomAccessFile)
+            }
         _ <- modifyCheckpoints(
               _.updated(checkpointIndex, Checkpoint(checkpointIndex, checkpointPath))
             )
@@ -307,19 +306,22 @@ object FileLMDBIndexBlockStore {
       dbi <- Sync[F].delay {
               env.openDbi(s"block_store_index", MDB_CREATE)
             }
-      _                            <- createNewFile(approvedBlockPath)
-      blockMessageRandomAccessFile <- RandomAccessIO.open(storagePath, RandomAccessIO.ReadWrite)
-      sortedCheckpointsEither      <- loadCheckpoints(checkpointsDirPath)
+      _                       <- createNewFile(approvedBlockPath)
+      sortedCheckpointsEither <- loadCheckpoints(checkpointsDirPath)
       result = sortedCheckpointsEither match {
         case Right(sortedCheckpoints) =>
           val checkpointsMap = sortedCheckpoints.map(c => c.index -> c).toMap
           val currentIndex   = sortedCheckpoints.lastOption.map(_.index + 1).getOrElse(0)
-          val initialState = FileLMDBIndexBlockStoreState[F](
-            blockMessageRandomAccessFile,
-            checkpointsMap,
-            currentIndex
-          )
           (for {
+            blockMessageRandomAccessFile <- RandomAccessIO.open(
+                                             storagePath,
+                                             RandomAccessIO.ReadWrite
+                                           )
+            initialState = FileLMDBIndexBlockStoreState[F](
+              blockMessageRandomAccessFile,
+              checkpointsMap,
+              currentIndex
+            )
             index <- LmdbDbi.create[F, ByteBuffer](env, dbi)
             result <- Resource
                        .make(

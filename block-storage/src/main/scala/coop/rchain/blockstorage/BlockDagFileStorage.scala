@@ -317,9 +317,7 @@ final class BlockDagFileStorage[F[_]: Concurrent: Sync: Log: RaiseIOError] priva
   }
 
   private def loadDagInfo(checkpoint: Checkpoint): F[CheckpointedDagInfo] = {
-    val checkpointDataInputResource = Resource.make(
-      RandomAccessIO.open[F](checkpoint.path, RandomAccessIO.Read)
-    )(_.close)
+    val checkpointDataInputResource = RandomAccessIO.open[F](checkpoint.path, RandomAccessIO.Read)
     for {
       blockMetadataList <- checkpointDataInputResource.use { checkpointDataInput =>
                             BlockDagFileStorage.readDataLookupData(checkpointDataInput)
@@ -1065,9 +1063,8 @@ object BlockDagFileStorage {
       blockNumberIndexAllocated <- loadBlockNumberIndexLmdbDbi(config).allocated
       (blockNumberIndex, _)     = blockNumberIndexAllocated
       readLatestMessagesCrc     <- readCrc[F](config.latestMessagesCrcPath)
-      latestMessagesFileResource = Resource.make(
-        RandomAccessIO.open[F](config.latestMessagesLogPath, RandomAccessIO.ReadWrite)
-      )(_.close)
+      latestMessagesFileResource = RandomAccessIO
+        .open[F](config.latestMessagesLogPath, RandomAccessIO.ReadWrite)
       latestMessagesResult <- latestMessagesFileResource.use { latestMessagesFile =>
                                for {
                                  latestMessagesReadResult <- readLatestMessagesData(
@@ -1085,9 +1082,8 @@ object BlockDagFileStorage {
                              }
       (latestMessagesMap, calculatedLatestMessagesCrc, logSize) = latestMessagesResult
       readDataLookupCrc                                         <- readCrc[F](config.blockMetadataCrcPath)
-      dataLookupFileResource = Resource.make(
-        RandomAccessIO.open[F](config.blockMetadataLogPath, RandomAccessIO.ReadWrite)
-      )(_.close)
+      dataLookupFileResource = RandomAccessIO
+        .open[F](config.blockMetadataLogPath, RandomAccessIO.ReadWrite)
       dataLookupResult <- dataLookupFileResource.use { randomAccessIO =>
                            for {
                              dataLookupList <- readDataLookupData(randomAccessIO)
@@ -1102,9 +1098,8 @@ object BlockDagFileStorage {
       (dataLookupList, calculatedDataLookupCrc) = dataLookupResult
       childMap                                  = extractChildMap(dataLookupList)
       topoSort                                  = extractTopoSort(dataLookupList)
-      equivocationsTrackerFileResource = Resource.make(
-        RandomAccessIO.open[F](config.equivocationsTrackerLogPath, RandomAccessIO.ReadWrite)
-      )(_.close)
+      equivocationsTrackerFileResource = RandomAccessIO
+        .open[F](config.equivocationsTrackerLogPath, RandomAccessIO.ReadWrite)
       readEquivocationsTrackerCrc <- readCrc[F](config.equivocationsTrackerCrcPath)
       equivocationsTrackerResult <- equivocationsTrackerFileResource.use {
                                      equivocationsTrackerFile =>
@@ -1122,9 +1117,8 @@ object BlockDagFileStorage {
                                    }
       (equivocationsTrackerList, calculatedEquivocationsTrackerCrc) = equivocationsTrackerResult
       equivocationsTracker                                          = squashEquivocationsTracker(equivocationsTrackerList)
-      invalidBlocksFileResource = Resource.make(
-        RandomAccessIO.open[F](config.invalidBlocksLogPath, RandomAccessIO.ReadWrite)
-      )(_.close)
+      invalidBlocksFileResource = RandomAccessIO
+        .open[F](config.invalidBlocksLogPath, RandomAccessIO.ReadWrite)
       readInvalidBlocksCrc <- readCrc[F](config.invalidBlocksCrcPath)
       invalidBlocksResult <- invalidBlocksFileResource.use { invalidBlocksFile =>
                               for {

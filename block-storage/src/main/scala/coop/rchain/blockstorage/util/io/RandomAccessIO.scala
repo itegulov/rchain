@@ -3,7 +3,7 @@ package coop.rchain.blockstorage.util.io
 import java.io.{EOFException, FileNotFoundException, RandomAccessFile}
 import java.nio.file.Path
 
-import cats.effect.Sync
+import cats.effect.{Resource, Sync}
 import cats.implicits._
 import coop.rchain.blockstorage.util.io.IOError.RaiseIOError
 
@@ -49,9 +49,11 @@ object RandomAccessIO {
   case object Write     extends Mode("w")
   case object ReadWrite extends Mode("rw")
 
-  def open[F[_]: Sync: RaiseIOError](path: Path, mode: Mode): F[RandomAccessIO[F]] =
-    handleIo(new RandomAccessFile(path.toFile, mode.representation), {
-      case e: FileNotFoundException => FileNotFound(e)
-      case e                        => UnexpectedIOError(e)
-    }).map(RandomAccessIO.apply[F])
+  def open[F[_]: Sync: RaiseIOError](path: Path, mode: Mode): Resource[F, RandomAccessIO[F]] =
+    Resource.make[F, RandomAccessIO[F]] {
+      handleIo(new RandomAccessFile(path.toFile, mode.representation), {
+        case e: FileNotFoundException => FileNotFound(e)
+        case e                        => UnexpectedIOError(e)
+      }).map(RandomAccessIO.apply[F])
+    }(_.close)
 }
