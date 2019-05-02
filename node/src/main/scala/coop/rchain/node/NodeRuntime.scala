@@ -418,97 +418,103 @@ class NodeRuntime private[node] (
       mapSize = 8L * 1024L * 1024L * 1024L,
       latestMessagesLogMaxSizeFactor = 10
     )
+    blockDagStorageResource = BlockDagFileStorage.create[Effect](dagConfig)(
+      Concurrent[Effect],
+      Sync[Effect],
+      Log.eitherTLog(Monad[Task], log)
+    )
     _ <- blockStoreResource.use { blockStore =>
-          for {
-            blockDagStorage <- BlockDagFileStorage.create[Effect](dagConfig)(
-                                Concurrent[Effect],
-                                Sync[Effect],
-                                Log.eitherTLog(Monad[Task], log)
-                              )
-            oracle = SafetyOracle
-              .cliqueOracle[Effect](
-                Monad[Effect],
-                Log.eitherTLog(Monad[Task], log),
-                Metrics.eitherT(Monad[Task], metrics)
-              )
-            runtime <- {
-              implicit val s                = rspaceScheduler
-              implicit val m: Metrics[Task] = metrics
-              Runtime
-                .createWithEmptyCost[Task, Task.Par](storagePath, storageSize, storeType, Seq.empty)
-                .toEffect
-            }
-            _ <- Runtime
-                  .injectEmptyRegistryRoot[Task](runtime.space, runtime.replaySpace)
-                  .toEffect
-            casperRuntime <- {
-              implicit val s                = rspaceScheduler
-              implicit val m: Metrics[Task] = metrics
-              Runtime
-                .createWithEmptyCost[Task, Task.Par](
-                  casperStoragePath,
-                  storageSize,
-                  storeType,
-                  Seq.empty
-                )
-                .toEffect
-            }
-            runtimeManager <- RuntimeManager.fromRuntime[Task](casperRuntime).toEffect
-            casperPacketHandler <- CasperPacketHandler
-                                    .of[Effect](
-                                      conf.casper,
-                                      defaultTimeout,
-                                      RuntimeManager.eitherTRuntimeManager(runtimeManager),
-                                      _.value
-                                    )(
-                                      labEff,
-                                      Metrics.eitherT(Monad[Task], metrics),
-                                      blockStore,
-                                      Cell.eitherTCell(Monad[Task], rpConnections),
-                                      NodeDiscovery
-                                        .eitherTNodeDiscovery(Monad[Task], nodeDiscovery),
-                                      TransportLayer
-                                        .eitherTTransportLayer(Monad[Task], log, transport),
-                                      ErrorHandler[Effect],
-                                      eiterTrpConfAsk(rpConfAsk),
-                                      oracle,
-                                      Sync[Effect],
-                                      Concurrent[Effect],
-                                      Time.eitherTTime(Monad[Task], time),
-                                      Log.eitherTLog(Monad[Task], log),
-                                      multiParentCasperRef,
-                                      blockDagStorage,
-                                      scheduler
-                                    )
-            packetHandler = PacketHandler.pf[Effect](casperPacketHandler.handle)(
-              Applicative[Effect],
+          blockDagStorageResource.use { blockDagStorage =>
+            val oracle = SafetyOracle.cliqueOracle[Effect](
+              Monad[Effect],
               Log.eitherTLog(Monad[Task], log),
-              ErrorHandler[Effect]
+              Metrics.eitherT(Monad[Task], metrics)
             )
-            nodeCoreMetrics = diagnostics.effects.nodeCoreMetrics[Task]
-            jvmMetrics      = diagnostics.effects.jvmMetrics[Task]
+            for {
+              runtime <- {
+                implicit val s                = rspaceScheduler
+                implicit val m: Metrics[Task] = metrics
+                Runtime
+                  .createWithEmptyCost[Task, Task.Par](
+                    storagePath,
+                    storageSize,
+                    storeType,
+                    Seq.empty
+                  )
+                  .toEffect
+              }
+              _ <- Runtime
+                    .injectEmptyRegistryRoot[Task](runtime.space, runtime.replaySpace)
+                    .toEffect
+              casperRuntime <- {
+                implicit val s                = rspaceScheduler
+                implicit val m: Metrics[Task] = metrics
+                Runtime
+                  .createWithEmptyCost[Task, Task.Par](
+                    casperStoragePath,
+                    storageSize,
+                    storeType,
+                    Seq.empty
+                  )
+                  .toEffect
+              }
+              runtimeManager <- RuntimeManager.fromRuntime[Task](casperRuntime).toEffect
+              casperPacketHandler <- CasperPacketHandler
+                                      .of[Effect](
+                                        conf.casper,
+                                        defaultTimeout,
+                                        RuntimeManager.eitherTRuntimeManager(runtimeManager),
+                                        _.value
+                                      )(
+                                        labEff,
+                                        Metrics.eitherT(Monad[Task], metrics),
+                                        blockStore,
+                                        Cell.eitherTCell(Monad[Task], rpConnections),
+                                        NodeDiscovery
+                                          .eitherTNodeDiscovery(Monad[Task], nodeDiscovery),
+                                        TransportLayer
+                                          .eitherTTransportLayer(Monad[Task], log, transport),
+                                        ErrorHandler[Effect],
+                                        eiterTrpConfAsk(rpConfAsk),
+                                        oracle,
+                                        Sync[Effect],
+                                        Concurrent[Effect],
+                                        Time.eitherTTime(Monad[Task], time),
+                                        Log.eitherTLog(Monad[Task], log),
+                                        multiParentCasperRef,
+                                        blockDagStorage,
+                                        scheduler
+                                      )
+              packetHandler = PacketHandler.pf[Effect](casperPacketHandler.handle)(
+                Applicative[Effect],
+                Log.eitherTLog(Monad[Task], log),
+                ErrorHandler[Effect]
+              )
+              nodeCoreMetrics = diagnostics.effects.nodeCoreMetrics[Task]
+              jvmMetrics      = diagnostics.effects.jvmMetrics[Task]
 
-            // 4. run the node program.
-            program = nodeProgram(runtime, casperRuntime, casperPacketHandler)(
-              time,
-              rpConfState,
-              rpConfAsk,
-              peerNodeAsk,
-              metrics,
-              transport,
-              kademliaStore,
-              nodeDiscovery,
-              rpConnections,
-              blockDagStorage,
-              blockStore,
-              oracle,
-              packetHandler,
-              multiParentCasperRef,
-              nodeCoreMetrics,
-              jvmMetrics
-            )
-            _ <- handleUnrecoverableErrors(program)
-          } yield ()
+              // 4. run the node program.
+              program = nodeProgram(runtime, casperRuntime, casperPacketHandler)(
+                time,
+                rpConfState,
+                rpConfAsk,
+                peerNodeAsk,
+                metrics,
+                transport,
+                kademliaStore,
+                nodeDiscovery,
+                rpConnections,
+                blockDagStorage,
+                blockStore,
+                oracle,
+                packetHandler,
+                multiParentCasperRef,
+                nodeCoreMetrics,
+                jvmMetrics
+              )
+              _ <- handleUnrecoverableErrors(program)
+            } yield ()
+          }(Sync[Effect])
         }(Sync[Effect])
   } yield ()
 

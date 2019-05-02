@@ -182,26 +182,23 @@ object HashSetCasperTestNode {
     val env                         = Context.env(blockStoreDir, mapSize)
     for {
       blockStore <- FileLMDBIndexBlockStore.createUnsafe[F](env, blockStoreDir)
-      blockDagStorage <- Resource.make[F, BlockDagStorage[F]](
-                          BlockDagFileStorage
-                            .createEmptyFromGenesis[F](
-                              BlockDagFileStorage.Config(
-                                blockDagDir.resolve("latest-messages-data"),
-                                blockDagDir.resolve("latest-messages-crc"),
-                                blockDagDir.resolve("block-metadata-data"),
-                                blockDagDir.resolve("block-metadata-crc"),
-                                blockDagDir.resolve("equivocations-tracker-data"),
-                                blockDagDir.resolve("equivocations-tracker-crc"),
-                                blockDagDir.resolve("invalid-blocks-data"),
-                                blockDagDir.resolve("invalid-blocks-crc"),
-                                blockDagDir.resolve("checkpoints"),
-                                blockDagDir.resolve("block-number-index"),
-                                mapSize
-                              ),
-                              genesis
-                            )(Concurrent[F], Sync[F], Log[F])
-                            .widen[BlockDagStorage[F]]
-                        )(_.close())
+      blockDagStorage <- BlockDagFileStorage
+                          .createEmptyFromGenesis[F](
+                            BlockDagFileStorage.Config(
+                              blockDagDir.resolve("latest-messages-data"),
+                              blockDagDir.resolve("latest-messages-crc"),
+                              blockDagDir.resolve("block-metadata-data"),
+                              blockDagDir.resolve("block-metadata-crc"),
+                              blockDagDir.resolve("equivocations-tracker-data"),
+                              blockDagDir.resolve("equivocations-tracker-crc"),
+                              blockDagDir.resolve("invalid-blocks-data"),
+                              blockDagDir.resolve("invalid-blocks-crc"),
+                              blockDagDir.resolve("checkpoints"),
+                              blockDagDir.resolve("block-number-index"),
+                              mapSize
+                            ),
+                            genesis
+                          )(Concurrent[F], Sync[F], Log[F])
       storageDirectory <- Resource.make[F, Path](
                            Sync[F].delay {
                              Files.createTempDirectory(s"hash-set-casper-test-$name")
@@ -294,26 +291,23 @@ object HashSetCasperTestNode {
               (blockStoreDir, blockDagDir) = storageDirectories
               env                          = Context.env(blockStoreDir, mapSize)
               blockStore                   <- FileLMDBIndexBlockStore.createUnsafe[F](env, blockStoreDir)
-              blockDagStorage <- Resource.make[F, BlockDagStorage[F]](
-                                  BlockDagFileStorage
-                                    .createEmptyFromGenesis[F](
-                                      BlockDagFileStorage.Config(
-                                        blockDagDir.resolve("latest-messages-data"),
-                                        blockDagDir.resolve("latest-messages-crc"),
-                                        blockDagDir.resolve("block-metadata-data"),
-                                        blockDagDir.resolve("block-metadata-crc"),
-                                        blockDagDir.resolve("equivocations-tracker-data"),
-                                        blockDagDir.resolve("equivocations-tracker-crc"),
-                                        blockDagDir.resolve("invalid-blocks-data"),
-                                        blockDagDir.resolve("invalid-blocks-crc"),
-                                        blockDagDir.resolve("checkpoints"),
-                                        blockDagDir.resolve("block-number-index"),
-                                        mapSize
-                                      ),
-                                      genesis
-                                    )(Concurrent[F], Sync[F], Log[F])
-                                    .widen
-                                )(_.close())
+              blockDagStorage <- BlockDagFileStorage
+                                  .createEmptyFromGenesis[F](
+                                    BlockDagFileStorage.Config(
+                                      blockDagDir.resolve("latest-messages-data"),
+                                      blockDagDir.resolve("latest-messages-crc"),
+                                      blockDagDir.resolve("block-metadata-data"),
+                                      blockDagDir.resolve("block-metadata-crc"),
+                                      blockDagDir.resolve("equivocations-tracker-data"),
+                                      blockDagDir.resolve("equivocations-tracker-crc"),
+                                      blockDagDir.resolve("invalid-blocks-data"),
+                                      blockDagDir.resolve("invalid-blocks-crc"),
+                                      blockDagDir.resolve("checkpoints"),
+                                      blockDagDir.resolve("block-number-index"),
+                                      mapSize
+                                    ),
+                                    genesis
+                                  )(Concurrent[F], Sync[F], Log[F])
               storageDirectory <- Resource.make[F, Path](
                                    Sync[F].delay {
                                      Files.createTempDirectory(s"hash-set-casper-test-$n")

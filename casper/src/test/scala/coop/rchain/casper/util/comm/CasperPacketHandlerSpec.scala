@@ -1,5 +1,7 @@
 package coop.rchain.casper.util.comm
 
+import java.nio.file.Files
+
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, ContextShift}
 import cats.implicits._
@@ -51,7 +53,7 @@ class CasperPacketHandlerSpec extends WordSpec {
     implicit val metrics = new MetricsNOP[Task]
     val networkId        = "test"
     val scheduler        = Scheduler.io("test")
-    val runtimeDir       = BlockDagStorageTestFixture.blockStorageDir
+    val runtimeDir       = Files.createTempDirectory("casper-runtime-")
     val activeRuntime =
       Runtime
         .createWithEmptyCost[Task, Task.Par](runtimeDir, 3024L * 1024, StoreType.LMDB)(

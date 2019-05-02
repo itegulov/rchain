@@ -5,12 +5,13 @@ import java.nio.file.{Files, Path}
 import java.util.zip.CRC32
 
 import cats.effect.{Concurrent, Resource, Sync}
-import cats.syntax.functor._
+import cats.implicits._
 import com.google.protobuf.ByteString
 import coop.rchain.blockstorage.BlockDagRepresentation.Validator
 import coop.rchain.blockstorage._
+import coop.rchain.blockstorage.util.io.IOError.RaiseIOError
+import coop.rchain.blockstorage.util.io._
 import coop.rchain.casper.protocol.BlockMessage
-
 import coop.rchain.catscontrib.TaskContrib.TaskOps
 import coop.rchain.metrics.Metrics
 import coop.rchain.metrics.Metrics.MetricsNOP
@@ -23,7 +24,8 @@ import monix.execution.Scheduler
 import org.lmdbjava.{Env, EnvFlags}
 
 trait BlockDagStorageFixture extends BeforeAndAfter { self: Suite =>
-  val scheduler = Scheduler.fixedPool("block-dag-storage-fixture-scheduler", 4)
+  implicit val raiseIOError: RaiseIOError[Task] = IOError.raiseIOErrorThroughSync[Task]
+  val scheduler                                 = Scheduler.fixedPool("block-dag-storage-fixture-scheduler", 4)
 
   def withStorage[R](f: BlockStore[Task] => IndexedBlockDagStorage[Task] => Task[R]): R = {
     val testProgram = BlockDagStorageTestFixture.createDirectories[Task].use {
@@ -31,11 +33,13 @@ trait BlockDagStorageFixture extends BeforeAndAfter { self: Suite =>
         implicit val metrics = new MetricsNOP[Task]()
         implicit val log     = new Log.NOPLog[Task]()
         BlockDagStorageTestFixture.createBlockStorage[Task](blockStorageDir).use { blockStore =>
-          for {
-            blockDagStorage        <- BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir)
-            indexedBlockDagStorage <- IndexedBlockDagStorage.create(blockDagStorage)
-            result                 <- f(blockStore)(indexedBlockDagStorage)
-          } yield result
+          BlockDagStorageTestFixture.createBlockDagStorage(blockDagStorageDir).use {
+            blockDagStorage =>
+              for {
+                indexedBlockDagStorage <- IndexedBlockDagStorage.create(blockDagStorage)
+                result                 <- f(blockStore)(indexedBlockDagStorage)
+              } yield result
+          }
         }
     }
     testProgram.unsafeRunSync(scheduler)
@@ -43,9 +47,6 @@ trait BlockDagStorageFixture extends BeforeAndAfter { self: Suite =>
 }
 
 object BlockDagStorageTestFixture {
-  def blockDagStorageDir: Path = Files.createTempDirectory("casper-block-dag-storage-test-")
-  def blockStorageDir: Path    = Files.createTempDirectory("casper-block-storage-test-")
-
   def writeInitialLatestMessages(
       latestMessagesData: Path,
       latestMessagesCrc: Path,
@@ -91,36 +92,35 @@ object BlockDagStorageTestFixture {
 
   def createBlockDagStorage(blockDagStorageDir: Path)(
       implicit log: Log[Task]
-  ): Task[BlockDagStorage[Task]] =
-    BlockDagFileStorage.create[Task](
-      BlockDagFileStorage.Config(
-        blockDagStorageDir.resolve("latest-messages-data"),
-        blockDagStorageDir.resolve("latest-messages-crc"),
-        blockDagStorageDir.resolve("block-metadata-data"),
-        blockDagStorageDir.resolve("block-metadata-crc"),
-        blockDagStorageDir.resolve("equivocations-tracker-data"),
-        blockDagStorageDir.resolve("equivocations-tracker-crc"),
-        blockDagStorageDir.resolve("invalid-blocks-data"),
-        blockDagStorageDir.resolve("invalid-blocks-crc"),
-        blockDagStorageDir.resolve("checkpoints"),
-        blockDagStorageDir.resolve("block-number-index"),
-        mapSize
-      )
-    )
-
-  def createDirectories[F[_]: Concurrent]: Resource[F, (Path, Path)] =
-    Resource.make[F, (Path, Path)] {
-      Sync[F].delay {
-        (
-          Files.createTempDirectory("casper-block-storage-test-"),
-          Files.createTempDirectory("casper-block-dag-storage-test-")
+  ): Resource[Task, BlockDagStorage[Task]] =
+    BlockDagFileStorage
+      .create[Task](
+        BlockDagFileStorage.Config(
+          blockDagStorageDir.resolve("latest-messages-data"),
+          blockDagStorageDir.resolve("latest-messages-crc"),
+          blockDagStorageDir.resolve("block-metadata-data"),
+          blockDagStorageDir.resolve("block-metadata-crc"),
+          blockDagStorageDir.resolve("equivocations-tracker-data"),
+          blockDagStorageDir.resolve("equivocations-tracker-crc"),
+          blockDagStorageDir.resolve("invalid-blocks-data"),
+          blockDagStorageDir.resolve("invalid-blocks-crc"),
+          blockDagStorageDir.resolve("checkpoints"),
+          blockDagStorageDir.resolve("block-number-index"),
+          mapSize
         )
-      }
+      )
+      .widen
+
+  def createDirectories[F[_]: Concurrent]: Resource[F, (Path, Path)] = {
+    implicit val raiseIOError: RaiseIOError[F] = IOError.raiseIOErrorThroughSync[F]
+    Resource.make[F, (Path, Path)] {
+      for {
+        blockStoreDir <- createTemporaryDirectory("casper-block-storage-test-")
+        blockDagDir   <- createTemporaryDirectory("casper-block-dag-storage-test-")
+      } yield (blockStoreDir, blockDagDir)
     } {
       case (blockStoreDir, blockDagDir) =>
-        Sync[F].delay {
-          blockStoreDir.recursivelyDelete()
-          blockDagDir.recursivelyDelete()
-        }
+        recursivelyDelete[F](blockStoreDir) >> recursivelyDelete[F](blockDagDir)
     }
+  }
 }
