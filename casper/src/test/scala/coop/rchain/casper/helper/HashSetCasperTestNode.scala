@@ -54,8 +54,8 @@ class HashSetCasperTestNode[F[_]](
     shardId: String = "rchain"
 )(
     implicit concurrentF: Concurrent[F],
-    val blockStore: BlockStore[F],
-    val blockDagStorage: BlockDagStorage[F],
+    implicit val blockStore: BlockStore[F],
+    implicit val blockDagStorage: BlockDagStorage[F],
     val metricEff: Metrics[F],
     val span: Span[F],
     val casperState: CasperStateCell[F],
